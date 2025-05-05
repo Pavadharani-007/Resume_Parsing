@@ -1,0 +1,105 @@
+import pdfplumber
+import re
+import json
+
+def extract_resume_data(pdf_path):
+    with pdfplumber.open(pdf_path) as pdf:
+        text = "\n".join(page.extract_text() for page in pdf.pages if page.extract_text())
+
+    # Basic fields
+    email = re.search(r"[\w\.-]+@[\w\.-]+", text)
+    phone = re.search(r"(\+?\d{1,3})?[-.\s]?\(?\d{3,4}\)?[-.\s]?\d{3,4}[-.\s]?\d{3,4}", text)
+    linkedin = re.search(r"(https?:\/\/)?(www\.)?linkedin\.com\/[^\s]+", text)
+
+    # Full Name
+    lines = text.splitlines()
+    name = lines[0].strip()
+
+    # Skills
+    skills_match = re.search(r"SKILLS\s*(.+?)(?:PROJECTS|PROFILE)", text, re.IGNORECASE | re.DOTALL)
+    skills = []
+    if skills_match:
+        skills_raw = skills_match.group(1)
+        skills = [s.strip() for s in re.split(r'\||,|\n', skills_raw) if s.strip()]
+
+    # Education
+    education = []
+    edu_matches = re.findall(r"(Bachelor|Master|B\.Sc|M\.Sc|B\.Tech|M\.Tech|Ph\.D)[^\n]*\n([^\n]*)\n.*?(\d{4})", text, re.IGNORECASE)
+    for degree, institution, year in edu_matches:
+        education.append({
+            "degree": degree.strip(),
+            "institution": institution.strip(),
+            "year": year.strip()
+        })
+
+    # Experience: Look under 'PROFESSIONAL EXPERIENCE'
+    experience = []
+    exp_match = re.search(r"PROFESSIONAL EXPERIENCE\s*(.+?)(?=EDUCATION|CERTIFICATES|$)", text, re.DOTALL | re.IGNORECASE)
+    if exp_match:
+        exp_block = exp_match.group(1)
+        exp_entries = re.split(r"\n\s*\n", exp_block.strip())  # Split on empty lines
+
+        for entry in exp_entries:
+            title_company_match = re.match(r"(.*?)\s+[–-]\s+(.*?)\s*\|", entry)
+            duration_match = re.search(r"\|\s*(\w+\s+\d{4}\s+[–-]\s+\w+\s+\d{4}|\w+\s+\d{4})", entry)
+            desc_lines = entry.split('\n')[1:] if '\n' in entry else []
+
+            experience.append({
+                "title": title_company_match.group(1).strip() if title_company_match else "",
+                "company": title_company_match.group(2).strip() if title_company_match else "",
+                "duration": duration_match.group(1).strip() if duration_match else "",
+                "description": " ".join(line.strip() for line in desc_lines)
+            })
+
+    # Certifications - under 'CERTIFICATES'
+    certs_match = re.search(r"CERTIFICATES\s*(.+)", text, re.IGNORECASE)
+    certifications = []
+    if certs_match:
+        certs_raw = certs_match.group(1)
+        certifications = [cert.strip() for cert in re.split(r'\||,', certs_raw) if cert.strip()]
+
+    # Projects
+    project_pattern = re.findall(r"PROJECTS?\s*[:\-]?\s*(.+?)(?=PROFESSIONAL EXPERIENCE|EDUCATION|$)", text, re.IGNORECASE | re.DOTALL)
+    projects = []
+    if project_pattern:
+        project_text = project_pattern[0]
+        projects = [proj.strip() for proj in project_text.split('\n') if proj.strip() and not proj.strip().startswith("Key Skills")]
+
+    # Standardize Bullet Points (Look for common bullet characters and replace them with a unified bullet)
+    def standardize_bullets(text):
+        """Standardize bullet points to '•'."""
+        text = re.sub(r"[\u2022\u2219•*–-]", "•", text)  # Replace different bullets with '•'
+        return text
+
+    # Apply bullet standardization to all sections
+    experience = [
+        {
+            "title": exp["title"],
+            "company": exp["company"],
+            "duration": exp["duration"],
+            "description": standardize_bullets(exp["description"])  # Apply bullet standardization here
+        }
+        for exp in experience
+    ]
+
+    projects = [standardize_bullets(proj) for proj in projects]
+
+    # Compile the final result
+    result = {
+        "name": name,
+        "email": email.group() if email else "",
+        "phone": phone.group() if phone else "",
+        "linkedin": linkedin.group() if linkedin else "",
+        "skills": skills,
+        "education": education,
+        "experience": experience,
+        "certifications": certifications,
+        "projects": projects
+    }
+
+    return result
+
+# Example usage
+pdf_path = "C:/Users/HP/Downloads/S.Pavadharani_ppppparseeee.pdf"
+resume_data = extract_resume_data(pdf_path)
+print(json.dumps(resume_data, indent=2))
